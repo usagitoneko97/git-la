@@ -1,4 +1,7 @@
 ## git la!
+
+[![demo](https://asciinema.org/a/281692.svg)](https://asciinema.org/a/281692)
+
 git-la can help to pick files from a large directory that you don't want to run `git init`, and organized them as *project based*.
 git-la will create hard link for any file that you want to add in a specified directory and able to run 
 all available git command for the specific project.
