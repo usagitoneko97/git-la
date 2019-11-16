@@ -1,4 +1,4 @@
-import configparser
+import contextlib
 import subprocess
 import json
 import pathlib
@@ -10,6 +10,38 @@ import argparse
 JSON_RECORD_FILE = ".gitla.json"
 
 
+class GitLa:
+    def __init__(self, record_path: pathlib.Path):
+        self.record_path = record_path
+        if record_path.exists():
+            self.json_records = self.read_json_record()
+        else:
+            self.json_records = {}
+
+    def read_json_record(self):
+        f_record = self.record_path
+        json_record = json.loads(f_record.read_text())
+        return json_record
+
+    def write_json_record(self):
+        if not self.record_path.exists():
+            self.record_path.touch()
+        self.record_path.write_text(json.dumps(self.json_records))
+
+    def add_new_project(self, project_name: str, path: pathlib.Path):
+        if project_name in self.json_records:
+            raise ValueError("{} already exists.".format(project_name))
+        self.json_records[project_name] = str(path)
+        self.write_json_record()
+        subprocess.check_output(["git", "init"], cwd=str(path))
+
+    def get_project(self, project_name):
+        path = self.json_records.get(project_name)
+        if not path:
+            raise ValueError("{} does not exist in the record: {}".format(project_name, str(self.record_path)))
+        return path
+
+
 def handle_new(args):
     base_dir = pathlib.Path(args.path) / args.project_name
     base_dir.mkdir(parents=True, exist_ok=True)
@@ -18,7 +50,7 @@ def handle_new(args):
     git_la.add_new_project(args.project_name, base_dir)
 
 
-def git_add(project_path: str, *args):
+def git_add_sym(project_path: str, *args):
     project_path = pathlib.Path(project_path)
     new_links = []
     for f in args:
@@ -27,29 +59,38 @@ def git_add(project_path: str, *args):
         if new_link.exists():
             new_link.unlink()
         os.link(str(f), str(new_link))
+        print("linked {} ---> {}".format(str(new_link), str(f)))
         new_links.append(str(new_link))
-    subprocess.check_output(["git", "add"] + new_links, cwd=str(project_path))
+    output = subprocess.check_output(["git", "add"] + new_links, cwd=str(project_path))
+    print(output.decode("utf-8"))
 
 
-GIT_EXTENSION = {"add": git_add}
+GIT_EXTENSION = {"add-sym": git_add_sym}
+
+
+@contextlib.contextmanager
+def _temp_chdir(path):
+    backup = os.getcwd()
+    os.chdir(path)
+    yield
+    os.chdir(backup)
 
 
 def handle_cmd(args):
     json_record_file = pathlib.Path(str(args.json)) if args.json else pathlib.Path(os.environ["HOME"]) / JSON_RECORD_FILE
     git_la = GitLa(json_record_file)
-    project_name = args.commands[0]
-    if len(args.commands) >= 2:
-        commands = args.commands[1:]
-    else:
-        raise ValueError("please specify the git commands after the project name!")
-    path = git_la.json_records.get(project_name)
+    project_name = args.commands
+    path = git_la.get_project(project_name)
     try:
-        extension_func = GIT_EXTENSION[commands[0]]
-        extension_func(path, *commands[1:])
+        extension_func = GIT_EXTENSION[sys.argv[3]]
+        extension_func(path, *sys.argv[4:])
     except KeyError:
+        commands = sys.argv[3:]
         commands.insert(0, "git")
-        status = subprocess.check_output(commands, cwd=str(path))
-        print(status.decode("utf-8"))
+        with _temp_chdir(str(path)):
+            os.system(" ".join("'{}'".format(str(r)) for r in commands))
+    except IndexError:
+        raise ValueError("issued git commands is not complete!")
 
 
 def _parse_optional(parser):
@@ -63,39 +104,7 @@ def _parse_new(parser):
 
 
 def _parse_cmd(parser):
-    parser.add_argument("commands", type=str, nargs="*", help="issue git command to the project specified")
-
-
-class GitLa:
-    def __init__(self, record_path: pathlib.Path):
-        self.record_path = record_path
-        if record_path.exists():
-            self.json_records = self.read_json_record()
-        else:
-            self.json_records = {}
-            record_path.touch()
-
-    def read_json_record(self):
-        f_record = self.record_path
-        json_record = json.loads(f_record.read_text())
-        return json_record
-
-    def write_json_record(self):
-        self.record_path.write_text(json.dumps(self.json_records))
-
-    def add_new_project(self, project_name: str, path: pathlib.Path):
-        if project_name in self.json_records:
-            raise ValueError("{} already exists.".format(project_name))
-        self.json_records[project_name] = str(path)
-        self.write_json_record()
-        subprocess.check_output(["git", "init"], cwd=str(path))
-        # set core.symlink = False in .git/config
-        git_config_path = str(path / ".git" / "config")
-        config = configparser.ConfigParser()
-        config.read(git_config_path)
-        config["core"]["symlink"] = "false"
-        with open(git_config_path, "w") as f:
-            config.write(f)
+    parser.add_argument("commands", type=str, help="issue git command to the project specified")
 
 
 if __name__ == '__main__':
@@ -108,5 +117,5 @@ if __name__ == '__main__':
     parser_cmd = sub_parser.add_parser("cmd")
     parser_cmd.set_defaults(func=handle_cmd)
     _parse_cmd(parser_cmd)
-    args = parser.parse_args(sys.argv[1:])
+    args, _ = parser.parse_known_args(sys.argv[1:])
     args.func(args)
