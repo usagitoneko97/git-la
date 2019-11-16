@@ -1,3 +1,4 @@
+#!/bin/env python3
 import contextlib
 import subprocess
 import json
@@ -94,7 +95,7 @@ def handle_cmd(args):
 
 
 def _parse_optional(parser):
-    parser.add_argument("--json", type=argparse.FileType("w"), help="specify the json database file")
+    parser.add_argument("--json", type=argparse.FileType("w"), help="specify the project mapping file")
 
 
 def _parse_new(parser):
